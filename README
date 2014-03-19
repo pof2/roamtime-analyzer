@@ -1,0 +1,10 @@
+Roam time analyser. Takes a pcap file and sta mac address as input and
+looks for roams.
+
+Output looks like this:
+
+BSSID                                  Frame#              Time (ms)   Freq
+09:00:07:a9:b2:ed -> 09:fe:12:45:b3:da  309369 ->  309434   114.836000 2412 -> 2462
+09:fe:12:45:b3:da -> 09:00:07:a9:b2:ed  408333 ->  408367    75.657000 2462 -> 2412
+09:00:07:a9:b2:ed -> 09:fe:12:45:b3:da  524082 ->  524130   100.840000 2412 -> 2462
+Analyzed 1314481 frames
