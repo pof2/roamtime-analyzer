@@ -21,11 +21,11 @@ limitations under the License.
 #include <pcap.h>
 #include <netinet/ether.h>
 
-#define RA_POS 22
-#define TA_POS 28
-#define TYPE_POS 18
+#define RA_POS 4
+#define TA_POS 10
+#define TYPE_POS 0
 
-int cmp_eth(const uint8_t *addr1, const struct ether_addr *addr2)
+static int cmp_eth(const uint8_t *addr1, const struct ether_addr *addr2)
 {
 	struct ether_addr *_addr1 = (struct ether_addr *) addr1;
 
@@ -38,9 +38,9 @@ static void usage(char **argv)
 	exit(1);
 }
 
-static uint8_t get_pkt_type(const uint8_t b)
+static uint8_t get_pkt_type(const uint8_t *p)
 {
-	return b >> 4 | (b & 0x0c) << 2;
+	return p[TYPE_POS] >> 4 | (p[TYPE_POS] & 0x0c) << 2;
 }
 
 static uint16_t get_freq(const uint8_t *p)
@@ -77,9 +77,11 @@ int main(int argc, char *argv[])
 	uint16_t curr_freq;
 
 	struct pcap_pkthdr *hdr;
+	uint16_t radiotap_len;
+
 	int ret;
 	char pcap_err[PCAP_ERRBUF_SIZE];
-	const uint8_t *p;
+	const uint8_t *rp, *wp;
 	unsigned char ftype;
 
 	if (argc != 3)
@@ -98,37 +100,42 @@ int main(int argc, char *argv[])
 
 	printf("BSSID                                  Frame#              Time (ms)   Freq\n");
 	while (1) {
-		ret = pcap_next_ex(pcap, &hdr, &p);
+		ret = pcap_next_ex(pcap, &hdr, &rp);
 		cnt++;
 		if (ret < 0)
 			break;
 
-		ftype = get_pkt_type(p[TYPE_POS]);
+		radiotap_len = rp[2] | rp[3] << 8;
+		wp = rp + radiotap_len;
+
+		ftype = get_pkt_type(wp);
 
 		/* Match data packets with dut's RA or TA */
 		if ((ftype == 0x28 || ftype == 0x20) &&
-		    (cmp_eth(p + RA_POS, &dut_addr) ||
-		     cmp_eth(p + TA_POS, &dut_addr))) {
+		    (cmp_eth(wp + RA_POS, &dut_addr) ||
+		     cmp_eth(wp + TA_POS, &dut_addr))) {
 
 			/* Get BSS of current packet */
-			if (cmp_eth(p + TA_POS, &dut_addr))
-				memcpy(&curr_bss, p + RA_POS, 6);
+			if (cmp_eth(wp + TA_POS, &dut_addr))
+				memcpy(&curr_bss, wp + RA_POS, 6);
 			else
-				memcpy(&curr_bss, p + TA_POS, 6);
+				memcpy(&curr_bss, wp + TA_POS, 6);
 
 			/* Save info about the data packet. Checking for the ack
 			   will overwrite */
-			memcpy(&tmp_ta, p + TA_POS, 6);
+			memcpy(&tmp_ta, wp + TA_POS, 6);
 			memcpy(&curr_data_hdr, hdr, sizeof(curr_data_hdr));
-			curr_freq = get_freq(p);
+			curr_freq = get_freq(rp);
 
 			/* Check if packet was ACKed */
-			ret = pcap_next_ex(pcap, &hdr, &p);
+			ret = pcap_next_ex(pcap, &hdr, &rp);
+			radiotap_len = rp[2] | rp[3] << 8;
+			wp = rp + radiotap_len;
 			cnt++;
 			if (ret < 0)
 				break;
-			if (get_pkt_type(p[TYPE_POS]) == 0x1d &&
-			    cmp_eth(p + RA_POS, &tmp_ta)) {
+			if (get_pkt_type(wp) == 0x1d &&
+			    cmp_eth(wp + RA_POS, &tmp_ta)) {
 //				printf("Packet # %06d %d:%d %08d %02x\n", cnt, (int)hdr->ts.tv_sec, (int)hdr->ts.tv_usec, hdr->len, ftype);
 //				printf("%d Acked %s--", cnt, ether_ntoa(&tmp_bss));
 //				printf("%s\n", ether_ntoa(&tmp_ta));
