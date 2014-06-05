@@ -24,6 +24,9 @@ limitations under the License.
 #define RA_POS 4
 #define TA_POS 10
 #define TYPE_POS 0
+#define SEQNR_POS 22
+#define BA_SSN_POS 18
+#define BA_BM_POS 18
 
 static int cmp_eth(const uint8_t *addr1, const struct ether_addr *addr2)
 {
@@ -48,11 +51,47 @@ static uint16_t get_freq(const uint8_t *p)
 	return p[10] | p[11] << 8;
 }
 
+static uint16_t get_seqnr(const uint8_t *p)
+{
+	return (p[SEQNR_POS + 1] << 8 | p[SEQNR_POS]) >> 4;
+}
+
+static uint16_t get_ssn(const uint8_t *p)
+{
+	return (p[BA_SSN_POS + 1] << 8 | p[BA_SSN_POS]) >> 4;
+}
+
 static double get_timestamp(struct pcap_pkthdr *hdr)
 {
 	return hdr->ts.tv_sec * 1000000 + hdr->ts.tv_usec;
 }
 
+static int is_pkt_acked(const uint8_t *wp, struct ether_addr *last_ta,
+			uint16_t seqnr)
+{
+	/* Normal ACK with correct RA */
+	if (get_pkt_type(wp) == 0x1d && cmp_eth(wp + RA_POS, last_ta))
+		return 1;
+
+	/* BA. Only BA directly after data frame is checked */
+	if (get_pkt_type(wp) == 0x19 && cmp_eth(wp + RA_POS, last_ta)) {
+		const uint8_t *bm = wp + BA_BM_POS;
+		uint16_t ssn;
+		int bit_offset, byte, bit;
+
+		ssn = get_ssn(wp);
+		bit_offset = seqnr - ssn;
+
+		if (bit_offset > 63)
+			return 0;
+
+		byte = bit_offset / 8;
+		bit = bit_offset % 8;
+		return !!(bm[byte] & 1 << bit);
+	}
+
+	return 0;
+}
 
 int main(int argc, char *argv[])
 {
@@ -65,6 +104,7 @@ int main(int argc, char *argv[])
 	/* Packet number of last roam */
 	int last_swap = 0;
 	struct ether_addr dut_addr, *tmp_eth, tmp_ta;
+	uint16_t tmp_seqnr;
 
 	/* Details of packet from previous BSS */
 	struct pcap_pkthdr last_data_hdr = {};
@@ -126,6 +166,7 @@ int main(int argc, char *argv[])
 			memcpy(&tmp_ta, wp + TA_POS, 6);
 			memcpy(&curr_data_hdr, hdr, sizeof(curr_data_hdr));
 			curr_freq = get_freq(rp);
+			tmp_seqnr = get_seqnr(wp);
 
 			/* Check if packet was ACKed */
 			ret = pcap_next_ex(pcap, &hdr, &rp);
@@ -134,8 +175,7 @@ int main(int argc, char *argv[])
 			cnt++;
 			if (ret < 0)
 				break;
-			if (get_pkt_type(wp) == 0x1d &&
-			    cmp_eth(wp + RA_POS, &tmp_ta)) {
+			if (is_pkt_acked(wp, &tmp_ta, tmp_seqnr)) {
 //				printf("Packet # %06d %d:%d %08d %02x\n", cnt, (int)hdr->ts.tv_sec, (int)hdr->ts.tv_usec, hdr->len, ftype);
 //				printf("%d Acked %s--", cnt, ether_ntoa(&tmp_bss));
 //				printf("%s\n", ether_ntoa(&tmp_ta));
